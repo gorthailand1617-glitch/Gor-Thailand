@@ -3,7 +3,7 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
 */
-import { GoogleGenAI, Modality, Type, FunctionDeclaration } from "@google/genai";
+import { GoogleGenAI, Type, FunctionDeclaration } from "@google/genai";
 import { ComplexityLevel, VisualStyle, ResearchResult, SearchResultItem, Language } from "../types";
 
 const getAi = () => {
@@ -14,7 +14,7 @@ const TEXT_MODEL = 'gemini-3-pro-preview';
 const IMAGE_MODEL = 'gemini-3-pro-image-preview';
 const EDIT_MODEL = 'gemini-3-pro-image-preview';
 
-// คำสั่งสำหรับบันทึกข้อมูล (Function Declaration)
+// แยก Function สำหรับแปลงข้อมูลเป็น JSON (เพื่อเลี่ยงการใช้ปนกับ Google Search)
 const saveHerbFunctionDeclaration: FunctionDeclaration = {
   name: 'recordHerbResearch',
   parameters: {
@@ -33,20 +33,10 @@ const saveHerbFunctionDeclaration: FunctionDeclaration = {
 
 const getLevelInstruction = (level: ComplexityLevel): string => {
   switch (level) {
-    case 'นักเรียนประถม': return "กลุ่มเป้าหมาย: นักเรียนประถม (6-12 ปี) เน้นภาพสีสันสดใส เข้าใจง่าย ตัวหนังสือภาษาไทยขนาดใหญ่";
-    case 'นักเรียนมัธยม': return "กลุ่มเป้าหมาย: นักเรียนมัธยม เน้นข้อมูลที่ถูกต้องตามหลักวิชาการ มีแผนผังและคำอธิบายประกอบที่ชัดเจน";
-    case 'ผู้เชี่ยวชาญ': return "กลุ่มเป้าหมาย: ผู้เชี่ยวชาญ/เภสัชกร เน้นรายละเอียดโครงสร้างพืช สารสำคัญทางเคมี และสรรพคุณทางยาเชิงลึก";
-    default: return "กลุ่มเป้าหมาย: บุคคลทั่วไป เน้นความสวยงามและประโยชน์ที่นำไปใช้ได้จริงในชีวิตประจำวัน";
-  }
-};
-
-const getStyleInstruction = (style: VisualStyle): string => {
-  switch (style) {
-    case 'ภาพวาดพฤกษศาสตร์': return "สไตล์: ภาพวาดพฤกษศาสตร์คลาสสิก (Botanical Illustration)";
-    case 'ภาพถ่ายจริง': return "สไตล์: ภาพถ่ายจริงคุณภาพสูง (Realistic Photo) แสงธรรมชาติ";
-    case 'ภาพการ์ตูน': return "สไตล์: การ์ตูนเพื่อการศึกษา สีสันสดใส";
-    case 'อินโฟกราฟิก': return "สไตล์: อินโฟกราฟิกสมัยใหม่ สะอาดตา";
-    default: return "สไตล์: ภาพวาดดิจิทัลเพื่อการศึกษาสมัยใหม่";
+    case 'นักเรียนประถม': return "กลุ่มเป้าหมาย: นักเรียนประถม (6-12 ปี) เน้นภาพสีสันสดใส เข้าใจง่าย";
+    case 'นักเรียนมัธยม': return "กลุ่มเป้าหมาย: นักเรียนมัธยม เน้นข้อมูลวิชาการ มีแผนผังชัดเจน";
+    case 'ผู้เชี่ยวชาญ': return "กลุ่มเป้าหมาย: ผู้เชี่ยวชาญ/เภสัชกร เน้นรายละเอียดโครงสร้างพืชและสารสำคัญ";
+    default: return "กลุ่มเป้าหมาย: บุคคลทั่วไป";
   }
 };
 
@@ -58,49 +48,50 @@ export const researchTopicForPrompt = async (
 ): Promise<ResearchResult> => {
   
   const levelInstr = getLevelInstruction(level);
-  const styleInstr = getStyleInstruction(style);
 
-  const systemPrompt = `
-    คุณคือผู้เชี่ยวชาญด้านพฤกษาศาสตร์และสมุนไพรไทย
-    เป้าหมายของคุณคือวิจัยข้อมูลเกี่ยวกับ: "${topic}" เพื่อสร้างสื่อการเรียนรู้
-    
-    **คำสั่งสำคัญ: ใช้ Google Search เพื่อหาข้อมูลที่ถูกต้องที่สุดในภาษาไทย**
-    
-    โปรดระบุข้อมูลในรูปแบบต่อไปนี้:
-    FACTS: สรุปสรรพคุณ 3-5 ข้อ
-    IMAGE_PROMPT: คำบรรยายภาพเป็นภาษาอังกฤษที่ละเอียดมาก
-  `;
-
-  const response = await getAi().models.generateContent({
+  // ขั้นตอนที่ 1: ค้นคว้าด้วย Google Search (ห้ามมี tools อื่นปน)
+  const searchResponse = await getAi().models.generateContent({
     model: TEXT_MODEL,
-    contents: systemPrompt,
+    contents: `วิจัยข้อมูลสมุนไพร "${topic}" สำหรับ${levelInstr} สรุปสรรพคุณและระบุ IMAGE_PROMPT สำหรับสร้างภาพสื่อการเรียนรู้`,
     config: {
-      tools: [{ googleSearch: {} }, { functionDeclarations: [saveHerbFunctionDeclaration] }],
+      tools: [{ googleSearch: {} }],
     },
   });
 
-  const text = response.text || "";
-  const factsMatch = text.match(/FACTS:\s*([\s\S]*?)(?=IMAGE_PROMPT:|$)/i);
+  const text = searchResponse.text || "";
+  const factsMatch = text.match(/FACTS:?\s*([\s\S]*?)(?=IMAGE_PROMPT:|$)/i);
   const facts = factsMatch ? factsMatch[1].trim().split('\n').map(f => f.replace(/^-\s*/, '').trim()).filter(f => f.length > 0) : [];
-  const promptMatch = text.match(/IMAGE_PROMPT:\s*([\s\S]*?)$/i);
-  const imagePrompt = promptMatch ? promptMatch[1].trim() : `Botanical illustration of ${topic}`;
+  const promptMatch = text.match(/IMAGE_PROMPT:?\s*([\s\S]*?)$/i);
+  const imagePrompt = promptMatch ? promptMatch[1].trim() : `Botanical illustration of ${topic} Thai herb, educational infographic style.`;
 
   const searchResults: SearchResultItem[] = [];
-  const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
+  const chunks = searchResponse.candidates?.[0]?.groundingMetadata?.groundingChunks;
   if (chunks) {
     chunks.forEach(chunk => {
       if (chunk.web?.uri && chunk.web?.title) searchResults.push({ title: chunk.web.title, url: chunk.web.uri });
     });
   }
 
-  // ดึงข้อมูล structured สำหรับบันทึกลง Sheet (ถ้าโมเดลสร้างให้)
-  const structuredData = response.functionCalls?.find(fc => fc.name === 'recordHerbResearch')?.args;
+  // ขั้นตอนที่ 2: แปลงเป็นข้อมูล Structured Data (ใช้ Flash เพื่อความเร็ว)
+  let structuredData = null;
+  try {
+    const structResponse = await getAi().models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: `จากข้อมูลนี้: "${text}" โปรดจัดหมวดหมู่ข้อมูลสมุนไพรลงในฟังก์ชัน recordHerbResearch`,
+      config: {
+        tools: [{ functionDeclarations: [saveHerbFunctionDeclaration] }],
+      },
+    });
+    structuredData = structResponse.functionCalls?.find(fc => fc.name === 'recordHerbResearch')?.args;
+  } catch (e) {
+    console.warn("Failed to extract structured data, skipping...", e);
+  }
 
   return {
     imagePrompt,
     facts,
     searchResults: Array.from(new Map(searchResults.map(item => [item.url, item])).values()),
-    structuredData // เพิ่มข้อมูลส่วนนี้เพื่อส่งต่อให้ UI บันทึกลง Sheet
+    structuredData
   };
 };
 
@@ -108,21 +99,43 @@ export const generateInfographicImage = async (prompt: string): Promise<string> 
   const response = await getAi().models.generateContent({
     model: IMAGE_MODEL,
     contents: { parts: [{ text: prompt }] },
-    config: { imageConfig: { aspectRatio: "16:9" }, responseModalities: [Modality.IMAGE] }
+    config: { 
+      imageConfig: { 
+        aspectRatio: "16:9",
+        imageSize: "1K" 
+      }
+      // ลบ responseModalities ออกตามกฎการสร้างรูปภาพ
+    }
   });
-  const part = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
-  if (part?.inlineData?.data) return `data:image/png;base64,${part.inlineData.data}`;
-  throw new Error("Failed to generate image");
+
+  // วนลูปหา Part ที่เป็นรูปภาพตามคำแนะนำ
+  for (const part of response.candidates?.[0]?.content?.parts || []) {
+    if (part.inlineData?.data) {
+      return `data:image/png;base64,${part.inlineData.data}`;
+    }
+  }
+  throw new Error("API did not return any image data");
 };
 
 export const editInfographicImage = async (currentImageBase64: string, editInstruction: string): Promise<string> => {
   const cleanBase64 = currentImageBase64.replace(/^data:image\/(png|jpeg|jpg);base64,/, '');
   const response = await getAi().models.generateContent({
     model: EDIT_MODEL,
-    contents: { parts: [{ inlineData: { mimeType: 'image/jpeg', data: cleanBase64 } }, { text: editInstruction }] },
-    config: { responseModalities: [Modality.IMAGE] }
+    contents: { 
+      parts: [
+        { inlineData: { mimeType: 'image/jpeg', data: cleanBase64 } }, 
+        { text: editInstruction }
+      ] 
+    },
+    config: {
+      imageConfig: { aspectRatio: "16:9" }
+    }
   });
-  const part = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
-  if (part?.inlineData?.data) return `data:image/png;base64,${part.inlineData.data}`;
+
+  for (const part of response.candidates?.[0]?.content?.parts || []) {
+    if (part.inlineData?.data) {
+      return `data:image/png;base64,${part.inlineData.data}`;
+    }
+  }
   throw new Error("Failed to edit image");
 };

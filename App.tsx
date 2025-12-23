@@ -36,7 +36,6 @@ const App: React.FC = () => {
   const [currentSearchResults, setCurrentSearchResults] = useState<SearchResultItem[]>([]);
   const [isDarkMode, setIsDarkMode] = useState(false);
 
-  // API Key State
   const [hasApiKey, setHasApiKey] = useState(false);
   const [checkingKey, setCheckingKey] = useState(true);
 
@@ -85,10 +84,11 @@ const App: React.FC = () => {
       const researchResult = await researchTopicForPrompt(topic, complexityLevel, visualStyle, language);
       setLoadingFacts(researchResult.facts);
       setCurrentSearchResults(researchResult.searchResults);
-      setLoadingStep(2);
-      setLoadingMessage(`กำลังสร้างอินโฟกราฟิก...`);
       
-      let base64Data = await generateInfographicImage(researchResult.imagePrompt);
+      setLoadingStep(2);
+      setLoadingMessage(`กำลังสร้างอินโฟกราฟิก (ขั้นตอนนี้อาจใช้เวลาสักครู่)...`);
+      
+      const base64Data = await generateInfographicImage(researchResult.imagePrompt);
       
       const newImage: GeneratedImage = {
         id: Date.now().toString(),
@@ -102,7 +102,14 @@ const App: React.FC = () => {
       };
       setImageHistory([newImage, ...imageHistory]);
     } catch (err: any) {
-      setError('ไม่สามารถสร้างสื่อการเรียนรู้ได้ในขณะนี้');
+      console.error("Detailed Error:", err);
+      if (err.message?.includes("API key")) {
+        setError("API Key ไม่ถูกต้องหรือหมดอายุ");
+      } else if (err.message?.includes("quota") || err.message?.includes("429")) {
+        setError("โควตาการใช้งานเต็ม โปรดรอสักครู่แล้วลองใหม่");
+      } else {
+        setError(`ไม่สามารถสร้างสื่อได้: ${err.message || "เกิดข้อผิดพลาดในการเชื่อมต่อ"}`);
+      }
     } finally {
       setIsLoading(false);
       setLoadingStep(0);
@@ -113,7 +120,6 @@ const App: React.FC = () => {
     if (imageHistory.length === 0 || isSaving) return;
     const current = imageHistory[0];
     
-    // เตรียมข้อมูลสำหรับส่งไป Code.gs
     const dataToSave = {
       name: current.prompt,
       properties: current.structuredData?.properties || current.prompt,
@@ -125,7 +131,6 @@ const App: React.FC = () => {
     setIsSaving(true);
     setSaveMessage(null);
 
-    // เรียกฟังก์ชันใน Code.gs
     if (typeof google !== 'undefined' && google.script && google.script.run) {
       google.script.run
         .withSuccessHandler((res: any) => {
@@ -139,11 +144,9 @@ const App: React.FC = () => {
         })
         .saveHerbToSheet(dataToSave);
     } else {
-      // Mockup สำหรับกรณีไม่ได้รันบน GAS จริง
       setTimeout(() => {
         setIsSaving(false);
-        setSaveMessage('บันทึกข้อมูลเรียบร้อยแล้ว (จำลอง)');
-        console.log('Saved to sheet mockup:', dataToSave);
+        setSaveMessage('บันทึกข้อมูลเรียบร้อยแล้ว (โหมดจำลอง)');
         setTimeout(() => setSaveMessage(null), 3000);
       }, 1000);
     }
@@ -163,8 +166,8 @@ const App: React.FC = () => {
         prompt: editPrompt
       };
       setImageHistory([newImage, ...imageHistory]);
-    } catch (err) {
-      setError('ไม่สามารถปรับปรุงภาพได้');
+    } catch (err: any) {
+      setError(`ไม่สามารถปรับปรุงภาพได้: ${err.message}`);
     } finally {
       setIsLoading(false);
     }
@@ -178,6 +181,7 @@ const App: React.FC = () => {
               <CreditCard className="w-16 h-16 text-herb-600 mx-auto mb-4" />
               <h2 className="text-2xl font-display font-bold mb-4">ต้องใช้ API Key แบบชำระเงิน</h2>
               <button onClick={handleSelectKey} className="w-full py-3 bg-herb-600 text-white rounded-xl font-bold shadow-lg">เลือก API Key</button>
+              <p className="mt-4 text-xs text-slate-500">โมเดลสร้างรูปภาพคุณภาพสูงจำเป็นต้องใช้โปรเจกต์ที่มี Billing</p>
           </div>
       </div>
     )}
@@ -226,14 +230,21 @@ const App: React.FC = () => {
         </div>
 
         {isLoading && <Loading status={loadingMessage} step={loadingStep} facts={loadingFacts} />}
-        {error && <div className="max-w-2xl mx-auto mt-8 p-6 bg-red-50 dark:bg-red-900/20 border border-red-200 rounded-2xl flex items-center gap-4 text-red-800 dark:text-red-200"><AlertCircle className="w-6 h-6" /><p>{error}</p></div>}
+        {error && (
+          <div className="max-w-2xl mx-auto mt-8 p-6 bg-red-50 dark:bg-red-900/20 border border-red-200 rounded-2xl flex items-center gap-4 text-red-800 dark:text-red-200">
+            <AlertCircle className="w-6 h-6 flex-shrink-0" />
+            <div>
+              <p className="font-bold">เกิดข้อผิดพลาด</p>
+              <p className="text-sm opacity-90">{error}</p>
+            </div>
+          </div>
+        )}
 
         {imageHistory.length > 0 && !isLoading && (
             <div className="space-y-12">
                 <div className="relative group max-w-6xl mx-auto">
                     <Infographic image={imageHistory[0]} onEdit={handleEdit} isEditing={isLoading} />
                     
-                    {/* Floating Save Button */}
                     <div className="absolute bottom-10 right-4 md:right-10 flex flex-col items-end gap-3 z-50">
                       {saveMessage && (
                         <div className="bg-emerald-500 text-white px-4 py-2 rounded-full text-sm font-bold shadow-lg flex items-center gap-2 animate-in fade-in slide-in-from-right-4">
